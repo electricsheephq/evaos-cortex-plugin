@@ -73,6 +73,12 @@ cd cortex && npm install --omit=dev
 | `retrievalBudget` | `number` | `2000` | Max token budget for retrieved memories |
 | `maxInjectionChars` | `number` | `8000` | Max characters injected into agent context |
 | `retrievalMode` | `string` | `fast` | Retrieval mode: `auto`, `fast`, or `thorough` |
+| `companyBrainContextMode` | `string` | `off` | Opt-in Company Brain context injection: `off` or `auto` |
+| `companyBrainContextAccountId` | `string` | — | Stable account ID for account-scoped Company Brain context |
+| `companyBrainContextSearch` | `string` | — | Account search text used when no account ID is configured |
+| `companyBrainContextFactsLimit` | `number` | `25` | Max account facts requested for Company Brain context |
+| `companyBrainContextEventsLimit` | `number` | `10` | Max action-readiness events requested for Company Brain context |
+| `companyBrainContextMaxChars` | `number` | `6000` | Max characters in the Company Brain context block |
 
 ## Tools
 
@@ -103,6 +109,13 @@ Company Brain tools are explicit and account-scoped. They call Cortex
 `citations`, `verification_status`, `requires_approval`, `action_readiness`,
 pagination, and `insufficient_evidence`. They do not inject generic always-on
 Company Brain context and they do not write to shared plugin storage.
+
+For customer/account workspaces, `companyBrainContextMode: "auto"` enables a
+separate `<company-brain-context>` block. The block is distinct from
+`<relevant-memories>`, resolves the account through the Company Brain account
+path, preserves cited evidence and action-readiness metadata, and marks
+approval-gated items as read-only operator-review candidates rather than
+executable actions.
 
 ## How It Works
 

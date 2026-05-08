@@ -29,6 +29,28 @@ or query tools. Do not flatten Company Brain account context into generic
 personal memory. Treat `insufficient_evidence` as a successful honest response,
 not as a tool failure.
 
+## Account-Scoped Context Injection
+
+Company Brain context injection is opt-in. Set `companyBrainContextMode` to
+`auto` and either provide `companyBrainContextAccountId` or
+`companyBrainContextSearch`. If no account ID is configured, the plugin uses
+the same account-list implementation path as `company_brain_accounts_list` and
+injects context only when it resolves one account.
+
+Injected Company Brain context uses a distinct `<company-brain-context>` block,
+not `<relevant-memories>`. It is account-scoped business context and
+source-cited operating state. It does not write to generic memory, and
+GBrain/shadow or dry-run context remains non-authoritative unless the block
+includes source citations for it.
+
+The block preserves Cortex fields such as `citations`, `insufficient_evidence`,
+`requires_approval`, `action_readiness`, `verification_status`, and
+`visibility_scope`. Approval-gated items are additionally summarized in an
+`Action safety` section with `executable_actions: []` and
+`action_status: "approval_required_not_executable"` so the runtime can show the
+operator what is ready for review without representing it as an executable
+action.
+
 ## Canary
 
 Run the live canary against a local or staged Cortex endpoint:

@@ -46,6 +46,12 @@ interface EvaMemoryConfig {
     injectionCriticalThreshold: number;
     injectionTechnicalThreshold: number;
     injectionPersonalThreshold: number;
+    companyBrainContextMode: "off" | "auto";
+    companyBrainContextAccountId: string;
+    companyBrainContextSearch: string;
+    companyBrainContextFactsLimit: number;
+    companyBrainContextEventsLimit: number;
+    companyBrainContextMaxChars: number;
 }
 interface RetrievedItem {
     source: string;
@@ -67,6 +73,12 @@ interface RetrievedItem {
     provenance?: string;
 }
 type CompanyBrainToolResult = Record<string, unknown>;
+interface CompanyBrainContextPayload {
+    account?: Record<string, unknown> | null;
+    brief?: CompanyBrainToolResult | null;
+    actionReadiness?: CompanyBrainToolResult | null;
+    resolution?: Record<string, unknown> | null;
+}
 interface ProcessedItem {
     item: RetrievedItem;
     duplicateCount: number;
@@ -74,6 +86,9 @@ interface ProcessedItem {
     relationHint?: string;
 }
 export declare function formatCompanyBrainToolResult(label: string, result: CompanyBrainToolResult | null): string;
+export declare function formatCompanyBrainContext(payload: CompanyBrainContextPayload, options?: {
+    maxChars?: number;
+}): string;
 declare function parseConfig(raw: unknown): EvaMemoryConfig;
 /** Session risk mode for dynamic threshold selection. */
 type InjectionMode = "critical" | "technical" | "personal";
@@ -187,6 +202,31 @@ declare const cortexPlugin: {
                     description: string;
                 };
                 injectionPersonalThreshold: {
+                    type: string;
+                    description: string;
+                };
+                companyBrainContextMode: {
+                    type: string;
+                    enum: string[];
+                    description: string;
+                };
+                companyBrainContextAccountId: {
+                    type: string;
+                    description: string;
+                };
+                companyBrainContextSearch: {
+                    type: string;
+                    description: string;
+                };
+                companyBrainContextFactsLimit: {
+                    type: string;
+                    description: string;
+                };
+                companyBrainContextEventsLimit: {
+                    type: string;
+                    description: string;
+                };
+                companyBrainContextMaxChars: {
                     type: string;
                     description: string;
                 };

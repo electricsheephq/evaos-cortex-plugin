@@ -16,6 +16,30 @@ function withOwner(params) {
   return params;
 }
 
+function countField(value, field) {
+  if (Array.isArray(value)) {
+    return value.reduce((sum, item) => sum + countField(item, field), 0);
+  }
+  if (!value || typeof value !== "object") return 0;
+  let count = Object.prototype.hasOwnProperty.call(value, field) ? 1 : 0;
+  for (const child of Object.values(value)) {
+    count += countField(child, field);
+  }
+  return count;
+}
+
+function countApprovalGated(value) {
+  if (Array.isArray(value)) {
+    return value.reduce((sum, item) => sum + countApprovalGated(item), 0);
+  }
+  if (!value || typeof value !== "object") return 0;
+  let count = value.requires_approval === true ? 1 : 0;
+  for (const child of Object.values(value)) {
+    count += countApprovalGated(child);
+  }
+  return count;
+}
+
 async function request(stage, path, options = {}) {
   const res = await fetch(`${cortexUrl}${path}`, {
     ...options,
@@ -85,6 +109,11 @@ async function main() {
     status: "passed",
     evidence_status: query?.evidence_status,
     citations: query?.citations?.length ?? 0,
+    approval_gated_items: countApprovalGated(query),
+    action_readiness_fields: countField(query, "action_readiness"),
+    verification_status_fields: countField(query, "verification_status"),
+    visibility_scope_fields: countField(query, "visibility_scope"),
+    action_safety: "approval-gated context is operator-review only; canary does not execute actions",
   });
 
   console.log(JSON.stringify({ ok: true, stages }, null, 2));

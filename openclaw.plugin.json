@@ -92,6 +92,38 @@
         "type": "boolean",
         "default": true,
         "description": "Deduplicate similar memories in v2 format"
+      },
+      "companyBrainContextMode": {
+        "type": "string",
+        "enum": [
+          "off",
+          "auto"
+        ],
+        "default": "off",
+        "description": "Opt-in account-scoped Company Brain context injection mode"
+      },
+      "companyBrainContextAccountId": {
+        "type": "string",
+        "description": "Stable Company Brain account ID to inject when companyBrainContextMode is auto"
+      },
+      "companyBrainContextSearch": {
+        "type": "string",
+        "description": "Account search text used with company_brain_accounts_list when no account ID is configured"
+      },
+      "companyBrainContextFactsLimit": {
+        "type": "number",
+        "default": 25,
+        "description": "Max account facts to request for Company Brain context"
+      },
+      "companyBrainContextEventsLimit": {
+        "type": "number",
+        "default": 10,
+        "description": "Max action-readiness events to request for Company Brain context"
+      },
+      "companyBrainContextMaxChars": {
+        "type": "number",
+        "default": 6000,
+        "description": "Max characters for the Company Brain context block"
       }
     },
     "required": []

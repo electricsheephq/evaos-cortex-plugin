@@ -25,6 +25,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.formatCompanyBrainToolResult = formatCompanyBrainToolResult;
+exports.formatCompanyBrainContext = formatCompanyBrainContext;
 exports.parseEvaMemoryConfig = parseEvaMemoryConfig;
 exports.detectInjectionMode = detectInjectionMode;
 exports.screenInjectionCandidates = screenInjectionCandidates;
@@ -64,6 +65,111 @@ function formatCompanyBrainToolResult(label, result) {
     }
     return `${label}:\n${JSON.stringify(result, null, 2)}`;
 }
+const COMPANY_BRAIN_CONTEXT_PREAMBLE = `Company Brain account-scoped context from Cortex.
+Scope: customer/account context and source-cited operating state, not personal Cortex memory.
+Authority: source-cited Company Brain evidence is the only authoritative business context in this block. GBrain, shadow, or dry-run context is non-authoritative unless backed by citations here.
+Action safety: read-only context. Approval-gated items are not executable actions; they are operator-review candidates only.`;
+function asRecord(value) {
+    return value && typeof value === "object" && !Array.isArray(value)
+        ? value
+        : null;
+}
+function firstString(record, keys) {
+    if (!record)
+        return "";
+    for (const key of keys) {
+        const value = record[key];
+        if (typeof value === "string" && value.trim())
+            return value.trim();
+    }
+    return "";
+}
+function escapeXmlAttribute(value) {
+    return value
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+}
+function isApprovalGatedRecord(record) {
+    return record.requires_approval === true;
+}
+function collectApprovalGatedItems(value, path = "$", results = []) {
+    if (Array.isArray(value)) {
+        value.forEach((entry, index) => collectApprovalGatedItems(entry, `${path}[${index}]`, results));
+        return results;
+    }
+    const record = asRecord(value);
+    if (!record)
+        return results;
+    if (isApprovalGatedRecord(record)) {
+        results.push({
+            path,
+            requires_approval: true,
+            action_readiness: record.action_readiness,
+            action_status: "approval_required_not_executable",
+            verification_status: record.verification_status,
+            visibility_scope: record.visibility_scope,
+            citations: record.citations,
+            source: record.source,
+        });
+    }
+    for (const [key, child] of Object.entries(record)) {
+        if (child && typeof child === "object") {
+            collectApprovalGatedItems(child, `${path}.${key}`, results);
+        }
+    }
+    return results;
+}
+function buildCompanyBrainActionSafety(payload) {
+    const approvalGatedItems = [
+        ...collectApprovalGatedItems(payload.brief, "$.brief"),
+        ...collectApprovalGatedItems(payload.actionReadiness, "$.action_readiness"),
+    ];
+    return {
+        executable_actions: [],
+        operator_approval_required: approvalGatedItems.length > 0,
+        approval_gated_count: approvalGatedItems.length,
+        approval_gated_items: approvalGatedItems,
+        policy: "approval-gated context is read-only and must not be represented as an executable action",
+    };
+}
+function appendJsonSection(lines, label, value) {
+    if (value === null || value === undefined)
+        return;
+    lines.push(`${label}:`);
+    lines.push(JSON.stringify(value, null, 2));
+}
+function formatCompanyBrainContext(payload, options = {}) {
+    const account = asRecord(payload.account);
+    if (!account)
+        return "";
+    const accountId = firstString(account, ["id", "account_id", "customer_id"]);
+    const accountName = firstString(account, ["name", "display_name", "account_name", "customer_name"]);
+    const visibilityScope = firstString(account, ["visibility_scope", "scope"]) || "account";
+    const attrs = [
+        accountId ? `account_id="${escapeXmlAttribute(accountId)}"` : "",
+        accountName ? `account_name="${escapeXmlAttribute(accountName)}"` : "",
+        `visibility_scope="${escapeXmlAttribute(visibilityScope)}"`,
+    ].filter(Boolean).join(" ");
+    const actionSafety = buildCompanyBrainActionSafety(payload);
+    const lines = [
+        `<company-brain-context ${attrs}>`,
+        COMPANY_BRAIN_CONTEXT_PREAMBLE,
+    ];
+    appendJsonSection(lines, "Account", account);
+    appendJsonSection(lines, "Resolution", payload.resolution);
+    appendJsonSection(lines, "Action safety", actionSafety);
+    appendJsonSection(lines, "Account brief", payload.brief);
+    appendJsonSection(lines, "Action readiness", payload.actionReadiness);
+    lines.push("</company-brain-context>");
+    const rendered = lines.join("\n");
+    const maxChars = options.maxChars ?? 6000;
+    if (rendered.length <= maxChars)
+        return rendered;
+    const truncated = rendered.slice(0, Math.max(0, maxChars - 96)).trimEnd();
+    return `${truncated}\n[company_brain_context_truncated: use company_brain_* tools for full cited evidence]\n</company-brain-context>`;
+}
 // --- Config ---
 function resolveEnv(value) {
     return value.replace(/\$\{([^}]+)\}/g, (_, key) => process.env[key] ?? "");
@@ -92,6 +198,12 @@ function parseConfig(raw) {
         injectionCriticalThreshold: 0.75,
         injectionTechnicalThreshold: 0.60,
         injectionPersonalThreshold: 0.45,
+        companyBrainContextMode: "off",
+        companyBrainContextAccountId: "",
+        companyBrainContextSearch: "",
+        companyBrainContextFactsLimit: 25,
+        companyBrainContextEventsLimit: 10,
+        companyBrainContextMaxChars: 6000,
     };
     if (!raw || typeof raw !== "object" || Array.isArray(raw))
         return defaults;
@@ -101,6 +213,7 @@ function parseConfig(raw) {
         ? c.retrievalMode
         : defaults.retrievalMode;
     const parsedInjectionFormat = c.injectionFormat === "v2" ? "v2" : defaults.injectionFormat;
+    const parsedCompanyBrainContextMode = c.companyBrainContextMode === "auto" ? "auto" : defaults.companyBrainContextMode;
     return {
         cortexUrl: typeof c.cortexUrl === "string" ? resolveEnv(c.cortexUrl) : defaults.cortexUrl,
         apiKey: typeof c.apiKey === "string" ? resolveEnv(c.apiKey) : defaults.apiKey,
@@ -124,6 +237,12 @@ function parseConfig(raw) {
         injectionCriticalThreshold: typeof c.injectionCriticalThreshold === "number" ? c.injectionCriticalThreshold : defaults.injectionCriticalThreshold,
         injectionTechnicalThreshold: typeof c.injectionTechnicalThreshold === "number" ? c.injectionTechnicalThreshold : defaults.injectionTechnicalThreshold,
         injectionPersonalThreshold: typeof c.injectionPersonalThreshold === "number" ? c.injectionPersonalThreshold : defaults.injectionPersonalThreshold,
+        companyBrainContextMode: parsedCompanyBrainContextMode,
+        companyBrainContextAccountId: typeof c.companyBrainContextAccountId === "string" ? c.companyBrainContextAccountId.trim() : defaults.companyBrainContextAccountId,
+        companyBrainContextSearch: typeof c.companyBrainContextSearch === "string" ? c.companyBrainContextSearch.trim() : defaults.companyBrainContextSearch,
+        companyBrainContextFactsLimit: clampNumber(c.companyBrainContextFactsLimit, defaults.companyBrainContextFactsLimit, 1, 200),
+        companyBrainContextEventsLimit: clampNumber(c.companyBrainContextEventsLimit, defaults.companyBrainContextEventsLimit, 1, 50),
+        companyBrainContextMaxChars: clampNumber(c.companyBrainContextMaxChars, defaults.companyBrainContextMaxChars, 1000, 20000),
     };
 }
 // --- HTTP Client ---
@@ -372,6 +491,67 @@ class CortexClient {
             params.set("include_embeddings", "true");
         return this.get(`/api/v1/memories?${params}`, 15000);
     }
+}
+const COMPANY_BRAIN_CONTEXT_KEYWORDS = /\b(company brain|customer|client|account|workspace|follow[- ]?up|blocked|blocker|crm|operator|approval|clinic|lead|deal)\b/i;
+function shouldAttemptCompanyBrainContext(prompt, cfg) {
+    if (cfg.companyBrainContextMode !== "auto")
+        return false;
+    if (cfg.companyBrainContextAccountId || cfg.companyBrainContextSearch)
+        return true;
+    return COMPANY_BRAIN_CONTEXT_KEYWORDS.test(prompt ?? "");
+}
+function normalizeCompanyBrainAccounts(result) {
+    if (!result)
+        return [];
+    const accounts = result.accounts ?? result.items ?? result.results;
+    return Array.isArray(accounts)
+        ? accounts.map(asRecord).filter((account) => Boolean(account))
+        : [];
+}
+function companyBrainAccountId(account) {
+    return firstString(account, ["id", "account_id", "customer_id"]);
+}
+async function resolveCompanyBrainAccountForContext(client, cfg, prompt) {
+    if (cfg.companyBrainContextAccountId) {
+        const account = {
+            id: cfg.companyBrainContextAccountId,
+            name: cfg.companyBrainContextSearch || undefined,
+            visibility_scope: "account",
+        };
+        return {
+            accountId: cfg.companyBrainContextAccountId,
+            account,
+            resolution: {
+                source: "configured_account_id",
+                account_id: cfg.companyBrainContextAccountId,
+                search: cfg.companyBrainContextSearch || undefined,
+            },
+        };
+    }
+    const search = cfg.companyBrainContextSearch || (prompt ?? "").slice(0, 240);
+    const accountsResult = await client.listCompanyBrainAccounts({
+        search,
+        limit: 2,
+        offset: 0,
+    });
+    const accounts = normalizeCompanyBrainAccounts(accountsResult);
+    if (accounts.length !== 1) {
+        return null;
+    }
+    const account = accounts[0];
+    const accountId = companyBrainAccountId(account);
+    if (!accountId)
+        return null;
+    return {
+        accountId,
+        account,
+        resolution: {
+            source: "company_brain_accounts_list",
+            search,
+            total: accountsResult?.total,
+            resolved_count: accounts.length,
+        },
+    };
 }
 // --- Local SQLite Memory Cache ---
 class LocalMemoryCache {
@@ -1173,6 +1353,7 @@ function extractMessages(rawMessages) {
         // Strip previously injected memory context
         text = text
             .replace(/<relevant-memories>[\s\S]*?<\/relevant-memories>\s*/g, "")
+            .replace(/<company-brain-context\b[\s\S]*?<\/company-brain-context>\s*/g, "")
             .trim();
         if (!text)
             continue;
@@ -1221,6 +1402,12 @@ const cortexPlugin = {
                 injectionCriticalThreshold: { type: "number", description: "Min score in critical mode (bench runs, deploys) (default: 0.75)" },
                 injectionTechnicalThreshold: { type: "number", description: "Min score in technical mode (coding, debug) (default: 0.60)" },
                 injectionPersonalThreshold: { type: "number", description: "Min score in personal/casual mode (default: 0.45)" },
+                companyBrainContextMode: { type: "string", enum: ["off", "auto"], description: "Opt-in Company Brain context injection mode. Default: off." },
+                companyBrainContextAccountId: { type: "string", description: "Stable Company Brain account ID to inject when companyBrainContextMode is auto." },
+                companyBrainContextSearch: { type: "string", description: "Account search text used with company_brain_accounts_list when no account ID is configured." },
+                companyBrainContextFactsLimit: { type: "number", description: "Max account facts to request for Company Brain context (default: 25)." },
+                companyBrainContextEventsLimit: { type: "number", description: "Max action-readiness events to request for Company Brain context (default: 10)." },
+                companyBrainContextMaxChars: { type: "number", description: "Max characters for the Company Brain context block (default: 6000)." },
             },
             required: [],
         },
@@ -1719,17 +1906,54 @@ const cortexPlugin = {
         // Lane guards prevent injection on heartbeat, boot, subagent, cron, isolated lanes.
         // Server-first: always call Cortex API (semantic embeddings). Local cache is fallback only.
         api.on("before_agent_start", async (event, ctx) => {
-            const startMs = Date.now();
             const blocks = [];
             const laneDecision = shouldSkipMemoryInjection(event.prompt, ctx);
             if (laneDecision.skip) {
                 api.logger.info(`cortex: skipping recall injection for lane=${laneDecision.lane}`);
                 return;
             }
+            if (shouldAttemptCompanyBrainContext(event.prompt, cfg)) {
+                try {
+                    const resolved = await resolveCompanyBrainAccountForContext(client, cfg, event.prompt);
+                    if (resolved) {
+                        const [briefResult, actionReadinessResult] = await Promise.allSettled([
+                            client.getCompanyBrainAccountBrief(resolved.accountId, {
+                                factsLimit: cfg.companyBrainContextFactsLimit,
+                                factsOffset: 0,
+                            }),
+                            client.queryCompanyBrain({
+                                accountId: resolved.accountId,
+                                intent: "follow_ups",
+                                question: "What follow-ups, blockers, or approval-gated actions are ready for operator review?",
+                                limit: cfg.companyBrainContextEventsLimit,
+                            }),
+                        ]);
+                        const brief = briefResult.status === "fulfilled" ? briefResult.value : null;
+                        const actionReadiness = actionReadinessResult.status === "fulfilled" ? actionReadinessResult.value : null;
+                        const companyBrainContext = formatCompanyBrainContext({
+                            account: resolved.account,
+                            brief,
+                            actionReadiness,
+                            resolution: resolved.resolution,
+                        }, { maxChars: cfg.companyBrainContextMaxChars });
+                        if (companyBrainContext) {
+                            blocks.push(companyBrainContext);
+                            api.logger.info(`cortex: injecting Company Brain context for account=${resolved.accountId}`);
+                        }
+                    }
+                    else {
+                        api.logger.info("cortex: Company Brain context skipped because account resolution was empty or ambiguous");
+                    }
+                }
+                catch (err) {
+                    api.logger.warn(`cortex: Company Brain context injection failed: ${String(err)}`);
+                }
+            }
             // --- Fetch contextual memories (+ optional cornerstones) ---
             if (cfg.autoRecall) {
                 const doRetrieve = event.prompt && isMemoryRelevant(event.prompt);
                 const doCornerstones = cfg.injectCornerstones; // default false — cornerstones in SOUL.md
+                const memoryStartMs = Date.now();
                 // --- Memory retrieval (server-first, local fallback) ---
                 let memoryItems = [];
                 // usedCache removed — server-first architecture, local cache is fallback only
@@ -1770,7 +1994,7 @@ const cortexPlugin = {
                         }
                     }
                     else if (retrieveResult.status === "rejected") {
-                        api.logger.warn(`cortex: recall failed (${Date.now() - startMs}ms): ${String(retrieveResult.reason)}`);
+                        api.logger.warn(`cortex: recall failed (${Date.now() - memoryStartMs}ms): ${String(retrieveResult.reason)}`);
                         // Server down — fall back to local cache if available
                         if (memoryCache) {
                             try {
@@ -1812,7 +2036,7 @@ const cortexPlugin = {
                         dedup: cfg.dedup,
                     });
                     if (context) {
-                        const elapsed = Date.now() - startMs;
+                        const elapsed = Date.now() - memoryStartMs;
                         if (elapsed <= 3000) {
                             blocks.push(context);
                             const source = "API";
