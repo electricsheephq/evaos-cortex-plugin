@@ -76,7 +76,8 @@ cd cortex && npm install --omit=dev
 
 ## Tools
 
-Cortex exposes 12 tools your agent can call directly:
+Cortex exposes memory tools and explicit Company Brain tools your agent can call
+directly:
 
 | Tool | Description |
 |------|-------------|
@@ -92,6 +93,16 @@ Cortex exposes 12 tools your agent can call directly:
 | `cortex_add_open_loop` | Track an unresolved thread or topic |
 | `cortex_resolve_open_loop` | Mark an open loop as resolved |
 | `cortex_list_open_loops` | List unresolved threads |
+| `company_brain_accounts_list` | Resolve Company Brain account/workspace IDs |
+| `company_brain_account_brief` | Fetch source-backed account facts and action-readiness buckets |
+| `company_brain_account_timeline` | Fetch artifact and claim events with citations |
+| `company_brain_query` | Ask narrow account-scoped pilot questions with cited evidence |
+
+Company Brain tools are explicit and account-scoped. They call Cortex
+`/api/v1/company-brain/*` over HTTP and preserve raw response fields including
+`citations`, `verification_status`, `requires_approval`, `action_readiness`,
+pagination, and `insufficient_evidence`. They do not inject generic always-on
+Company Brain context and they do not write to shared plugin storage.
 
 ## How It Works
 

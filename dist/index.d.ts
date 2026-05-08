@@ -66,12 +66,14 @@ interface RetrievedItem {
     };
     provenance?: string;
 }
+type CompanyBrainToolResult = Record<string, unknown>;
 interface ProcessedItem {
     item: RetrievedItem;
     duplicateCount: number;
     conflictWithId?: string;
     relationHint?: string;
 }
+export declare function formatCompanyBrainToolResult(label: string, result: CompanyBrainToolResult | null): string;
 declare function parseConfig(raw: unknown): EvaMemoryConfig;
 /** Session risk mode for dynamic threshold selection. */
 type InjectionMode = "critical" | "technical" | "personal";

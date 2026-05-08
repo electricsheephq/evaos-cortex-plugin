@@ -91,11 +91,45 @@ interface RetrievalResult {
   mode: string;
 }
 
+type CompanyBrainQueryIntent =
+  | "auto"
+  | "account_brief"
+  | "daily_brief"
+  | "what_changed"
+  | "follow_ups"
+  | "blocked"
+  | "open_loops";
+
+type CompanyBrainToolResult = Record<string, unknown>;
+
 interface ProcessedItem {
   item: RetrievedItem;
   duplicateCount: number;
   conflictWithId?: string;
   relationHint?: string;
+}
+
+function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(value)));
+}
+
+function addOptionalParam(params: URLSearchParams, key: string, value: unknown): void {
+  if (typeof value === "string" && value.trim()) params.set(key, value.trim());
+  if (typeof value === "number" && Number.isFinite(value)) params.set(key, String(Math.trunc(value)));
+}
+
+function addOwnerParam(params: URLSearchParams, ownerId: string): void {
+  // The Cortex API remains authoritative for ownership. Tenant/JWT callers cannot
+  // override auth owner; this explicit owner is for self-host and owner-bound API keys.
+  if (ownerId && ownerId !== "default") params.set("owner_id", ownerId);
+}
+
+export function formatCompanyBrainToolResult(label: string, result: CompanyBrainToolResult | null): string {
+  if (!result) {
+    return `${label} failed: Cortex returned no result.`;
+  }
+  return `${label}:\n${JSON.stringify(result, null, 2)}`;
 }
 
 // --- Config ---
@@ -386,6 +420,62 @@ class CortexClient {
     const params = new URLSearchParams({ owner_id: ownerId ?? this.ownerId });
     if (status) params.set("status", status);
     return this.get<{ open_loops?: Record<string, unknown>[]; total?: number }>(`/api/v1/open-loops?${params}`);
+  }
+
+  // --- Company Brain ---
+
+  async listCompanyBrainAccounts(options: {
+    search?: string;
+    workspaceId?: string;
+    limit?: number;
+    offset?: number;
+  } = {}) {
+    const params = new URLSearchParams();
+    addOwnerParam(params, this.ownerId);
+    addOptionalParam(params, "search", options.search);
+    addOptionalParam(params, "workspace_id", options.workspaceId);
+    params.set("limit", String(clampNumber(options.limit, 50, 1, 200)));
+    params.set("offset", String(clampNumber(options.offset, 0, 0, 1000000)));
+    const query = params.toString();
+    return this.get<CompanyBrainToolResult>(`/api/v1/company-brain/accounts${query ? `?${query}` : ""}`);
+  }
+
+  async getCompanyBrainAccountBrief(accountId: string, options: { factsLimit?: number; factsOffset?: number } = {}) {
+    const params = new URLSearchParams();
+    addOwnerParam(params, this.ownerId);
+    params.set("facts_limit", String(clampNumber(options.factsLimit, 50, 1, 200)));
+    params.set("facts_offset", String(clampNumber(options.factsOffset, 0, 0, 1000000)));
+    return this.get<CompanyBrainToolResult>(
+      `/api/v1/company-brain/accounts/${encodeURIComponent(accountId)}/brief?${params}`,
+    );
+  }
+
+  async getCompanyBrainAccountTimeline(accountId: string, options: { limit?: number; offset?: number } = {}) {
+    const params = new URLSearchParams();
+    addOwnerParam(params, this.ownerId);
+    params.set("limit", String(clampNumber(options.limit, 50, 1, 200)));
+    params.set("offset", String(clampNumber(options.offset, 0, 0, 1000000)));
+    return this.get<CompanyBrainToolResult>(
+      `/api/v1/company-brain/accounts/${encodeURIComponent(accountId)}/timeline?${params}`,
+    );
+  }
+
+  async queryCompanyBrain(options: {
+    accountId: string;
+    intent?: CompanyBrainQueryIntent;
+    question?: string;
+    limit?: number;
+  }) {
+    return this.post<CompanyBrainToolResult>(
+      "/api/v1/company-brain/query",
+      {
+        owner_id: this.ownerId && this.ownerId !== "default" ? this.ownerId : undefined,
+        account_id: options.accountId,
+        intent: options.intent ?? "auto",
+        question: options.question,
+        limit: clampNumber(options.limit, 10, 1, 50),
+      },
+    );
   }
 
   // --- Cornerstones ---
@@ -1742,6 +1832,139 @@ const cortexPlugin = {
         },
       },
       { name: "cortex_insights" },
+    );
+
+    api.registerTool(
+      {
+        name: "company_brain_accounts_list",
+        label: "Company Brain Accounts List",
+        description: "List or search source-backed Company Brain accounts through the Cortex HTTP API. Use this first to resolve stable account IDs before brief, timeline, or query calls.",
+        parameters: Type.Object({
+          search: Type.Optional(Type.String({ description: "Optional account/workspace search text" })),
+          workspace_id: Type.Optional(Type.String({ description: "Optional Cortex Company Brain workspace ID" })),
+          limit: Type.Optional(Type.Number({ description: "Max accounts to return, 1-200 (default: 50)" })),
+          offset: Type.Optional(Type.Number({ description: "Zero-based account offset (default: 0)" })),
+        }),
+        async execute(_toolCallId: string, params: unknown): Promise<any> {
+          const { search, workspace_id, limit, offset } = params as {
+            search?: string;
+            workspace_id?: string;
+            limit?: number;
+            offset?: number;
+          };
+          try {
+            const result = await client.listCompanyBrainAccounts({
+              search,
+              workspaceId: workspace_id,
+              limit,
+              offset,
+            });
+            return { content: [{ type: "text" as const, text: formatCompanyBrainToolResult("Company Brain accounts", result) }] };
+          } catch (err) {
+            return { content: [{ type: "text" as const, text: `Company Brain account list failed: ${String(err)}` }] };
+          }
+        },
+      },
+      { name: "company_brain_accounts_list" },
+    );
+
+    api.registerTool(
+      {
+        name: "company_brain_account_brief",
+        label: "Company Brain Account Brief",
+        description: "Fetch a source-backed Company Brain account brief. `insufficient_evidence` is an honest successful result, not a tool failure.",
+        parameters: Type.Object({
+          account_id: Type.String({ description: "Stable Company Brain account ID from company_brain_accounts_list" }),
+          facts_limit: Type.Optional(Type.Number({ description: "Max facts to return, 1-200 (default: 50)" })),
+          facts_offset: Type.Optional(Type.Number({ description: "Zero-based fact offset (default: 0)" })),
+        }),
+        async execute(_toolCallId: string, params: unknown): Promise<any> {
+          const { account_id, facts_limit, facts_offset } = params as {
+            account_id: string;
+            facts_limit?: number;
+            facts_offset?: number;
+          };
+          try {
+            const result = await client.getCompanyBrainAccountBrief(account_id, {
+              factsLimit: facts_limit,
+              factsOffset: facts_offset,
+            });
+            return { content: [{ type: "text" as const, text: formatCompanyBrainToolResult("Company Brain account brief", result) }] };
+          } catch (err) {
+            return { content: [{ type: "text" as const, text: `Company Brain account brief failed: ${String(err)}` }] };
+          }
+        },
+      },
+      { name: "company_brain_account_brief" },
+    );
+
+    api.registerTool(
+      {
+        name: "company_brain_account_timeline",
+        label: "Company Brain Account Timeline",
+        description: "Fetch source artifact and claim events for one Company Brain account, preserving citations and timeline pagination.",
+        parameters: Type.Object({
+          account_id: Type.String({ description: "Stable Company Brain account ID from company_brain_accounts_list" }),
+          limit: Type.Optional(Type.Number({ description: "Max timeline items to return, 1-200 (default: 50)" })),
+          offset: Type.Optional(Type.Number({ description: "Zero-based timeline offset (default: 0)" })),
+        }),
+        async execute(_toolCallId: string, params: unknown): Promise<any> {
+          const { account_id, limit, offset } = params as {
+            account_id: string;
+            limit?: number;
+            offset?: number;
+          };
+          try {
+            const result = await client.getCompanyBrainAccountTimeline(account_id, { limit, offset });
+            return { content: [{ type: "text" as const, text: formatCompanyBrainToolResult("Company Brain account timeline", result) }] };
+          } catch (err) {
+            return { content: [{ type: "text" as const, text: `Company Brain account timeline failed: ${String(err)}` }] };
+          }
+        },
+      },
+      { name: "company_brain_account_timeline" },
+    );
+
+    api.registerTool(
+      {
+        name: "company_brain_query",
+        label: "Company Brain Query",
+        description: "Ask a narrow Company Brain pilot question for one resolved account. Answers must be source-cited or return `insufficient_evidence`; the tool never performs outbound action.",
+        parameters: Type.Object({
+          account_id: Type.String({ description: "Stable Company Brain account ID from company_brain_accounts_list" }),
+          intent: Type.Optional(Type.Union([
+            Type.Literal("auto"),
+            Type.Literal("account_brief"),
+            Type.Literal("daily_brief"),
+            Type.Literal("what_changed"),
+            Type.Literal("follow_ups"),
+            Type.Literal("blocked"),
+            Type.Literal("open_loops"),
+          ], { description: "Narrow deterministic Company Brain query intent" })),
+          question: Type.Optional(Type.String({ description: "Optional natural-language question for auto routing" })),
+          limit: Type.Optional(Type.Number({ description: "Max facts/events to cite, 1-50 (default: 10)" })),
+        }),
+        async execute(_toolCallId: string, params: unknown): Promise<any> {
+          const { account_id, intent, question, limit } = params as {
+            account_id: string;
+            intent?: CompanyBrainQueryIntent;
+            question?: string;
+            limit?: number;
+          };
+          try {
+            const result = await client.queryCompanyBrain({
+              accountId: account_id,
+              intent,
+              question,
+              limit,
+            });
+            return { content: [{ type: "text" as const, text: formatCompanyBrainToolResult("Company Brain query", result) }] };
+          } catch (err) {
+            return { content: [{ type: "text" as const, text: `Company Brain query failed: ${String(err)}` }] };
+          }
+        },
+      },
+      { name: "company_brain_query" },
     );
 
     api.registerTool(

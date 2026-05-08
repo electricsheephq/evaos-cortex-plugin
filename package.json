@@ -6,6 +6,8 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
+    "test": "npm run build && node dist/__tests__/memory-context-format.test.js && node dist/__tests__/company-brain-tools.test.js",
+    "company-brain:canary": "node scripts/company-brain-canary.mjs",
     "prepublishOnly": "npm run build"
   },
   "files": [
