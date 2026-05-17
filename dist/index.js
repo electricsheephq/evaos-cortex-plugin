@@ -26,6 +26,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.formatCompanyBrainToolResult = formatCompanyBrainToolResult;
 exports.formatCompanyBrainContext = formatCompanyBrainContext;
+exports.resolveCompanyBrainAccountFromAccountsList = resolveCompanyBrainAccountFromAccountsList;
 exports.parseEvaMemoryConfig = parseEvaMemoryConfig;
 exports.detectInjectionMode = detectInjectionMode;
 exports.screenInjectionCandidates = screenInjectionCandidates;
@@ -134,8 +135,33 @@ function buildCompanyBrainActionSafety(payload) {
         policy: "approval-gated context is read-only and must not be represented as an executable action",
     };
 }
+function collectArrayRecords(record, keys) {
+    if (!record)
+        return [];
+    const results = [];
+    for (const key of keys) {
+        const value = record[key];
+        if (Array.isArray(value)) {
+            results.push(...value.map(asRecord).filter((entry) => Boolean(entry)));
+        }
+    }
+    return results;
+}
+function buildCompanyBrainOpenFollowUps(payload) {
+    const brief = asRecord(payload.brief);
+    const actionReadiness = asRecord(payload.actionReadiness);
+    const sections = collectArrayRecords(actionReadiness, ["sections"])
+        .filter(section => /follow[-_ ]?up/i.test(firstString(section, ["label", "type", "intent", "kind"])));
+    return [
+        ...collectArrayRecords(brief, ["follow_ups", "open_follow_ups"]),
+        ...collectArrayRecords(actionReadiness, ["follow_ups", "open_follow_ups"]),
+        ...sections,
+    ];
+}
 function appendJsonSection(lines, label, value) {
     if (value === null || value === undefined)
+        return;
+    if (Array.isArray(value) && value.length === 0)
         return;
     lines.push(`${label}:`);
     lines.push(JSON.stringify(value, null, 2));
@@ -153,12 +179,14 @@ function formatCompanyBrainContext(payload, options = {}) {
         `visibility_scope="${escapeXmlAttribute(visibilityScope)}"`,
     ].filter(Boolean).join(" ");
     const actionSafety = buildCompanyBrainActionSafety(payload);
+    const openFollowUps = buildCompanyBrainOpenFollowUps(payload);
     const lines = [
         `<company-brain-context ${attrs}>`,
         COMPANY_BRAIN_CONTEXT_PREAMBLE,
     ];
     appendJsonSection(lines, "Account", account);
     appendJsonSection(lines, "Resolution", payload.resolution);
+    appendJsonSection(lines, "Open follow-ups", openFollowUps);
     appendJsonSection(lines, "Action safety", actionSafety);
     appendJsonSection(lines, "Account brief", payload.brief);
     appendJsonSection(lines, "Action readiness", payload.actionReadiness);
@@ -511,34 +539,15 @@ function normalizeCompanyBrainAccounts(result) {
 function companyBrainAccountId(account) {
     return firstString(account, ["id", "account_id", "customer_id"]);
 }
-async function resolveCompanyBrainAccountForContext(client, cfg, prompt) {
-    if (cfg.companyBrainContextAccountId) {
-        const account = {
-            id: cfg.companyBrainContextAccountId,
-            name: cfg.companyBrainContextSearch || undefined,
-            visibility_scope: "account",
-        };
-        return {
-            accountId: cfg.companyBrainContextAccountId,
-            account,
-            resolution: {
-                source: "configured_account_id",
-                account_id: cfg.companyBrainContextAccountId,
-                search: cfg.companyBrainContextSearch || undefined,
-            },
-        };
-    }
-    const search = cfg.companyBrainContextSearch || (prompt ?? "").slice(0, 240);
-    const accountsResult = await client.listCompanyBrainAccounts({
-        search,
-        limit: 2,
-        offset: 0,
-    });
+function resolveCompanyBrainAccountFromAccountsList(accountsResult, options = {}) {
     const accounts = normalizeCompanyBrainAccounts(accountsResult);
-    if (accounts.length !== 1) {
+    const configuredAccountId = options.configuredAccountId?.trim();
+    const candidates = configuredAccountId
+        ? accounts.filter(account => companyBrainAccountId(account) === configuredAccountId)
+        : accounts;
+    if (candidates.length !== 1)
         return null;
-    }
-    const account = accounts[0];
+    const account = candidates[0];
     const accountId = companyBrainAccountId(account);
     if (!accountId)
         return null;
@@ -547,11 +556,26 @@ async function resolveCompanyBrainAccountForContext(client, cfg, prompt) {
         account,
         resolution: {
             source: "company_brain_accounts_list",
-            search,
+            search: options.search,
+            configured_account_id: configuredAccountId || undefined,
             total: accountsResult?.total,
-            resolved_count: accounts.length,
+            resolved_count: candidates.length,
         },
     };
+}
+async function resolveCompanyBrainAccountForContext(client, cfg, prompt) {
+    const search = cfg.companyBrainContextSearch ||
+        cfg.companyBrainContextAccountId ||
+        (prompt ?? "").slice(0, 240);
+    const accountsResult = await client.listCompanyBrainAccounts({
+        search,
+        limit: cfg.companyBrainContextAccountId ? 20 : 2,
+        offset: 0,
+    });
+    return resolveCompanyBrainAccountFromAccountsList(accountsResult, {
+        configuredAccountId: cfg.companyBrainContextAccountId,
+        search,
+    });
 }
 // --- Local SQLite Memory Cache ---
 class LocalMemoryCache {

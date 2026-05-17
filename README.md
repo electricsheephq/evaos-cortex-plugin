@@ -113,9 +113,9 @@ Company Brain context and they do not write to shared plugin storage.
 For customer/account workspaces, `companyBrainContextMode: "auto"` enables a
 separate `<company-brain-context>` block. The block is distinct from
 `<relevant-memories>`, resolves the account through the Company Brain account
-path, preserves cited evidence and action-readiness metadata, and marks
-approval-gated items as read-only operator-review candidates rather than
-executable actions.
+path even when a stable account ID is configured, preserves cited evidence and
+action-readiness metadata, surfaces open follow-ups, and marks approval-gated
+items as read-only operator-review candidates rather than executable actions.
 
 ## How It Works
 

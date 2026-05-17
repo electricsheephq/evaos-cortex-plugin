@@ -22,6 +22,34 @@ const index_1 = require("../index");
     strict_1.default.equal(cfg.companyBrainContextMaxChars, 5000);
 }
 {
+    const resolved = (0, index_1.resolveCompanyBrainAccountFromAccountsList)({
+        accounts: [
+            { id: "acct_other", name: "Other Clinic" },
+            { id: "acct_acme", name: "Acme Clinic", visibility_scope: "account" },
+        ],
+        total: 2,
+    }, {
+        configuredAccountId: "acct_acme",
+        search: "acct_acme",
+    });
+    strict_1.default.equal(resolved?.accountId, "acct_acme");
+    strict_1.default.equal(resolved?.account.name, "Acme Clinic");
+    strict_1.default.equal(resolved?.resolution.source, "company_brain_accounts_list");
+    strict_1.default.equal(resolved?.resolution.configured_account_id, "acct_acme");
+}
+{
+    const resolved = (0, index_1.resolveCompanyBrainAccountFromAccountsList)({
+        accounts: [
+            { id: "acct_other", name: "Other Clinic" },
+        ],
+        total: 1,
+    }, {
+        configuredAccountId: "acct_acme",
+        search: "acct_acme",
+    });
+    strict_1.default.equal(resolved, null);
+}
+{
     const rendered = (0, index_1.formatCompanyBrainContext)({
         account: {
             id: "acct_acme",
@@ -94,6 +122,7 @@ const index_1 = require("../index");
     strict_1.default.match(rendered, /account_id="acct_acme"/);
     strict_1.default.doesNotMatch(rendered, /<relevant-memories>/);
     strict_1.default.match(rendered, /read-only context/i);
+    strict_1.default.match(rendered, /Open follow-ups:/);
     strict_1.default.match(rendered, /approval-gated items are not executable/i);
     strict_1.default.match(rendered, /"executable_actions": \[\]/);
     strict_1.default.match(rendered, /"action_status": "approval_required_not_executable"/);

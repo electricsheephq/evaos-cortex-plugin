@@ -115,7 +115,7 @@ interface CompanyBrainContextPayload {
   resolution?: Record<string, unknown> | null;
 }
 
-interface CompanyBrainResolvedAccount {
+export interface CompanyBrainResolvedAccount {
   accountId: string;
   account: Record<string, unknown>;
   resolution: Record<string, unknown>;
@@ -233,8 +233,34 @@ function buildCompanyBrainActionSafety(payload: CompanyBrainContextPayload): Rec
   };
 }
 
+function collectArrayRecords(record: Record<string, unknown> | null, keys: string[]): Record<string, unknown>[] {
+  if (!record) return [];
+  const results: Record<string, unknown>[] = [];
+  for (const key of keys) {
+    const value = record[key];
+    if (Array.isArray(value)) {
+      results.push(...value.map(asRecord).filter((entry): entry is Record<string, unknown> => Boolean(entry)));
+    }
+  }
+  return results;
+}
+
+function buildCompanyBrainOpenFollowUps(payload: CompanyBrainContextPayload): Record<string, unknown>[] {
+  const brief = asRecord(payload.brief);
+  const actionReadiness = asRecord(payload.actionReadiness);
+  const sections = collectArrayRecords(actionReadiness, ["sections"])
+    .filter(section => /follow[-_ ]?up/i.test(firstString(section, ["label", "type", "intent", "kind"])));
+
+  return [
+    ...collectArrayRecords(brief, ["follow_ups", "open_follow_ups"]),
+    ...collectArrayRecords(actionReadiness, ["follow_ups", "open_follow_ups"]),
+    ...sections,
+  ];
+}
+
 function appendJsonSection(lines: string[], label: string, value: unknown): void {
   if (value === null || value === undefined) return;
+  if (Array.isArray(value) && value.length === 0) return;
   lines.push(`${label}:`);
   lines.push(JSON.stringify(value, null, 2));
 }
@@ -256,6 +282,7 @@ export function formatCompanyBrainContext(
   ].filter(Boolean).join(" ");
 
   const actionSafety = buildCompanyBrainActionSafety(payload);
+  const openFollowUps = buildCompanyBrainOpenFollowUps(payload);
   const lines = [
     `<company-brain-context ${attrs}>`,
     COMPANY_BRAIN_CONTEXT_PREAMBLE,
@@ -263,6 +290,7 @@ export function formatCompanyBrainContext(
 
   appendJsonSection(lines, "Account", account);
   appendJsonSection(lines, "Resolution", payload.resolution);
+  appendJsonSection(lines, "Open follow-ups", openFollowUps);
   appendJsonSection(lines, "Action safety", actionSafety);
   appendJsonSection(lines, "Account brief", payload.brief);
   appendJsonSection(lines, "Action readiness", payload.actionReadiness);
@@ -700,40 +728,22 @@ function companyBrainAccountId(account: Record<string, unknown>): string {
   return firstString(account, ["id", "account_id", "customer_id"]);
 }
 
-async function resolveCompanyBrainAccountForContext(
-  client: CortexClient,
-  cfg: EvaMemoryConfig,
-  prompt: string | undefined,
-): Promise<CompanyBrainResolvedAccount | null> {
-  if (cfg.companyBrainContextAccountId) {
-    const account = {
-      id: cfg.companyBrainContextAccountId,
-      name: cfg.companyBrainContextSearch || undefined,
-      visibility_scope: "account",
-    };
-    return {
-      accountId: cfg.companyBrainContextAccountId,
-      account,
-      resolution: {
-        source: "configured_account_id",
-        account_id: cfg.companyBrainContextAccountId,
-        search: cfg.companyBrainContextSearch || undefined,
-      },
-    };
-  }
-
-  const search = cfg.companyBrainContextSearch || (prompt ?? "").slice(0, 240);
-  const accountsResult = await client.listCompanyBrainAccounts({
-    search,
-    limit: 2,
-    offset: 0,
-  });
+export function resolveCompanyBrainAccountFromAccountsList(
+  accountsResult: CompanyBrainToolResult | null,
+  options: {
+    configuredAccountId?: string;
+    search?: string;
+  } = {},
+): CompanyBrainResolvedAccount | null {
   const accounts = normalizeCompanyBrainAccounts(accountsResult);
-  if (accounts.length !== 1) {
-    return null;
-  }
+  const configuredAccountId = options.configuredAccountId?.trim();
+  const candidates = configuredAccountId
+    ? accounts.filter(account => companyBrainAccountId(account) === configuredAccountId)
+    : accounts;
 
-  const account = accounts[0];
+  if (candidates.length !== 1) return null;
+
+  const account = candidates[0];
   const accountId = companyBrainAccountId(account);
   if (!accountId) return null;
 
@@ -742,11 +752,31 @@ async function resolveCompanyBrainAccountForContext(
     account,
     resolution: {
       source: "company_brain_accounts_list",
-      search,
+      search: options.search,
+      configured_account_id: configuredAccountId || undefined,
       total: accountsResult?.total,
-      resolved_count: accounts.length,
+      resolved_count: candidates.length,
     },
   };
+}
+
+async function resolveCompanyBrainAccountForContext(
+  client: CortexClient,
+  cfg: EvaMemoryConfig,
+  prompt: string | undefined,
+): Promise<CompanyBrainResolvedAccount | null> {
+  const search = cfg.companyBrainContextSearch ||
+    cfg.companyBrainContextAccountId ||
+    (prompt ?? "").slice(0, 240);
+  const accountsResult = await client.listCompanyBrainAccounts({
+    search,
+    limit: cfg.companyBrainContextAccountId ? 20 : 2,
+    offset: 0,
+  });
+  return resolveCompanyBrainAccountFromAccountsList(accountsResult, {
+    configuredAccountId: cfg.companyBrainContextAccountId,
+    search,
+  });
 }
 
 // --- Local SQLite Memory Cache ---

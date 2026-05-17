@@ -79,6 +79,11 @@ interface CompanyBrainContextPayload {
     actionReadiness?: CompanyBrainToolResult | null;
     resolution?: Record<string, unknown> | null;
 }
+export interface CompanyBrainResolvedAccount {
+    accountId: string;
+    account: Record<string, unknown>;
+    resolution: Record<string, unknown>;
+}
 interface ProcessedItem {
     item: RetrievedItem;
     duplicateCount: number;
@@ -90,6 +95,10 @@ export declare function formatCompanyBrainContext(payload: CompanyBrainContextPa
     maxChars?: number;
 }): string;
 declare function parseConfig(raw: unknown): EvaMemoryConfig;
+export declare function resolveCompanyBrainAccountFromAccountsList(accountsResult: CompanyBrainToolResult | null, options?: {
+    configuredAccountId?: string;
+    search?: string;
+}): CompanyBrainResolvedAccount | null;
 /** Session risk mode for dynamic threshold selection. */
 type InjectionMode = "critical" | "technical" | "personal";
 /** Parse raw plugin config into a validated EvaMemoryConfig object. */

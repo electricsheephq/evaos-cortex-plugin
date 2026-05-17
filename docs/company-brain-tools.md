@@ -36,6 +36,9 @@ Company Brain context injection is opt-in. Set `companyBrainContextMode` to
 `companyBrainContextSearch`. If no account ID is configured, the plugin uses
 the same account-list implementation path as `company_brain_accounts_list` and
 injects context only when it resolves one account.
+When an account ID is configured, the plugin still resolves it through the
+account-list path and injects only if the returned account list contains that
+exact stable ID.
 
 Injected Company Brain context uses a distinct `<company-brain-context>` block,
 not `<relevant-memories>`. It is account-scoped business context and
@@ -45,8 +48,9 @@ includes source citations for it.
 
 The block preserves Cortex fields such as `citations`, `insufficient_evidence`,
 `requires_approval`, `action_readiness`, `verification_status`, and
-`visibility_scope`. Approval-gated items are additionally summarized in an
-`Action safety` section with `executable_actions: []` and
+`visibility_scope`. Open follow-ups are surfaced in a distinct section while the
+raw cited Cortex response remains available below it. Approval-gated items are
+additionally summarized in an `Action safety` section with `executable_actions: []` and
 `action_status: "approval_required_not_executable"` so the runtime can show the
 operator what is ready for review without representing it as an executable
 action.

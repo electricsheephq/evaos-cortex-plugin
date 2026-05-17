@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { formatCompanyBrainContext, parseEvaMemoryConfig } from "../index";
+import {
+  formatCompanyBrainContext,
+  parseEvaMemoryConfig,
+  resolveCompanyBrainAccountFromAccountsList,
+} from "../index";
 
 {
   const cfg = parseEvaMemoryConfig({
@@ -17,6 +21,44 @@ import { formatCompanyBrainContext, parseEvaMemoryConfig } from "../index";
   assert.equal(cfg.companyBrainContextFactsLimit, 12);
   assert.equal(cfg.companyBrainContextEventsLimit, 7);
   assert.equal(cfg.companyBrainContextMaxChars, 5000);
+}
+
+{
+  const resolved = resolveCompanyBrainAccountFromAccountsList(
+    {
+      accounts: [
+        { id: "acct_other", name: "Other Clinic" },
+        { id: "acct_acme", name: "Acme Clinic", visibility_scope: "account" },
+      ],
+      total: 2,
+    },
+    {
+      configuredAccountId: "acct_acme",
+      search: "acct_acme",
+    },
+  );
+
+  assert.equal(resolved?.accountId, "acct_acme");
+  assert.equal(resolved?.account.name, "Acme Clinic");
+  assert.equal(resolved?.resolution.source, "company_brain_accounts_list");
+  assert.equal(resolved?.resolution.configured_account_id, "acct_acme");
+}
+
+{
+  const resolved = resolveCompanyBrainAccountFromAccountsList(
+    {
+      accounts: [
+        { id: "acct_other", name: "Other Clinic" },
+      ],
+      total: 1,
+    },
+    {
+      configuredAccountId: "acct_acme",
+      search: "acct_acme",
+    },
+  );
+
+  assert.equal(resolved, null);
 }
 
 {
@@ -93,6 +135,7 @@ import { formatCompanyBrainContext, parseEvaMemoryConfig } from "../index";
   assert.match(rendered, /account_id="acct_acme"/);
   assert.doesNotMatch(rendered, /<relevant-memories>/);
   assert.match(rendered, /read-only context/i);
+  assert.match(rendered, /Open follow-ups:/);
   assert.match(rendered, /approval-gated items are not executable/i);
   assert.match(rendered, /"executable_actions": \[\]/);
   assert.match(rendered, /"action_status": "approval_required_not_executable"/);
